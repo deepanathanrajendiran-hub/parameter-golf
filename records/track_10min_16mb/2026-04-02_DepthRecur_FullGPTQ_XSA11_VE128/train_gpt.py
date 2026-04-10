@@ -120,11 +120,11 @@ class Hyperparameters:
     gptq_n_calib_seqs = int(os.environ.get("GPTQ_N_CALIB_SEQS", "64"))
     gptq_calib_seq_len = int(os.environ.get("GPTQ_CALIB_SEQ_LEN", "2048"))
     gptq_damp = float(os.environ.get("GPTQ_DAMP", "0.005"))
-    # SLOT-24: per-window scored-position learnable optimization at eval time (PR #1488)
+    # Context-Only SLOT: causal variant — delta optimized on context positions only (PR #1217)
     slot_enabled = bool(int(os.environ.get("SLOT_ENABLED", "1")))
-    slot_steps = int(os.environ.get("SLOT_STEPS", "24"))
-    slot_lr = float(os.environ.get("SLOT_LR", "0.012"))
-    slot_lr_min = float(os.environ.get("SLOT_LR_MIN", "0.001"))
+    slot_steps = int(os.environ.get("SLOT_STEPS", "8"))
+    slot_lr = float(os.environ.get("SLOT_LR", "0.005"))
+    slot_lr_min = float(os.environ.get("SLOT_LR_MIN", "0.0005"))
     slot_wd = float(os.environ.get("SLOT_WD", "1e-8"))
 
 # --- Polar Express Newton-Schulz orthogonalization (arXiv:2505.16932) ---
@@ -1497,20 +1497,17 @@ def eval_val_sliding_slot(
     stride: int,
     log0=print,
 ) -> tuple[float, float]:
-    """SLOT-24: Scored-position Learnable Optimization at Test-time (PR #1488, ndokutovich).
+    """Context-Only SLOT: causal scored-position learnable optimization at test-time (PR #1217).
 
     For each evaluation window, creates two tiny per-window learnable parameters:
       - delta      [1, 1, model_dim]  — injected into the residual stream post-SmearGate
       - logit_bias [1, 1, vocab_size] — added directly to the final logits
 
-    24 AdamW steps with cosine LR decay (0.012 → 0.001) adapt these to the current
-    window's token distribution. All model weights remain frozen. Both parameters are
-    discarded after scoring — no state crosses window boundaries.
+    8 AdamW steps with cosine LR decay (0.005 → 0.0005) adapt these to the current
+    window's context. Crucially, optimization loss is computed ONLY on context positions
+    (positions 0..wlen-stride), never on the new tokens being scored — making this
+    strictly causal. All model weights remain frozen. Parameters discarded after scoring.
 
-    Only the last `stride` positions of each window are scored (legal: adaptation
-    uses only tokens already in the context window, no future lookahead).
-
-    Based on PR #1488 achieving 0.8265 BPB via SP1024 + SLOT-24 + Pre-Quant TTT.
     Returns (val_loss, val_bpb).
     """
     seq_len = args.eval_seq_len if args.eval_seq_len > 0 else args.train_seq_len
@@ -1563,14 +1560,16 @@ def eval_val_sliding_slot(
             lambda m, i, o, d=delta: o + d.to(o.dtype)
         )
 
-        # 24 AdamW optimisation steps on the full window
+        # Context-Only SLOT: optimize delta using context positions only (causal, PR #1217)
+        # The last `stride` tokens are never used for optimization — only for scoring.
+        ctx_end = max(wlen - stride, 1) if ws > 0 else wlen
         for _ in range(args.slot_steps):
             slot_opt.zero_grad(set_to_none=True)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 logits = base_model.forward_logits(x)           # delta injected via hook
             loss = F.cross_entropy(
-                (logits.float() + logit_bias)[:, :wlen].reshape(-1, args.vocab_size),
-                y_tgt[:, :wlen].reshape(-1),
+                (logits.float() + logit_bias)[:, :ctx_end].reshape(-1, args.vocab_size),
+                y_tgt[:, :ctx_end].reshape(-1),
             )
             loss.backward()
             slot_opt.step()
