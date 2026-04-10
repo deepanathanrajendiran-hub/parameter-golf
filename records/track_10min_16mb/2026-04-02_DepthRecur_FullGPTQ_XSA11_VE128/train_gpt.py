@@ -24,6 +24,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
+from datetime import timedelta
 try:
     from flash_attn_interface import flash_attn_func as flash_attn_3_func
 except ImportError:
@@ -2037,7 +2038,7 @@ def main() -> None:
     device = torch.device("cuda", local_rank)
     torch.cuda.set_device(device)
     if distributed:
-        dist.init_process_group(backend="nccl", device_id=device)
+        dist.init_process_group(backend="nccl", device_id=device, timeout=timedelta(hours=3))
         dist.barrier()
     master_process = rank == 0
     torch.backends.cuda.matmul.allow_tf32 = True
