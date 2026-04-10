@@ -85,7 +85,7 @@ class Hyperparameters:
     lawa_enabled = bool(int(os.environ.get("LAWA_ENABLED", "0")))
     lawa_k = int(os.environ.get("LAWA_K", 10))
     lawa_freq = int(os.environ.get("LAWA_FREQ", 100))
-    muon_wd = float(os.environ.get("MUON_WD", 0.04))
+    muon_wd = float(os.environ.get("MUON_WD", 0.095))
     adam_wd = float(os.environ.get("ADAM_WD", 0.04))
     qat_enabled = bool(int(os.environ.get("QAT_ENABLED", "0")))
     bigram_vocab_size = int(os.environ.get("BIGRAM_VOCAB_SIZE", 3072))
@@ -110,9 +110,9 @@ class Hyperparameters:
     ttt_grad_clip = float(os.environ.get("TTT_GRAD_CLIP", 1.0))
     # Pre-quantization AdamW TTT with discriminative per-block LR (Discriminative TTT, PR #1351)
     ttt_adamw_enabled = bool(int(os.environ.get("TTT_ADAMW_ENABLED", "1")))
-    ttt_adamw_lr = float(os.environ.get("TTT_ADAMW_LR", "0.0005"))
-    ttt_adamw_epochs = int(os.environ.get("TTT_ADAMW_EPOCHS", "10"))
-    ttt_adamw_freeze_blocks = int(os.environ.get("TTT_ADAMW_FREEZE_BLOCKS", "0"))
+    ttt_adamw_lr = float(os.environ.get("TTT_ADAMW_LR", "0.0003"))
+    ttt_adamw_epochs = int(os.environ.get("TTT_ADAMW_EPOCHS", "18"))
+    ttt_adamw_freeze_blocks = int(os.environ.get("TTT_ADAMW_FREEZE_BLOCKS", "1"))
     # --- Novel additions: SwiGLU, Depth Recurrence, AR Self-Gen GPTQ ---
     use_swiglu = bool(int(os.environ.get("USE_SWIGLU", "0")))
     recur_passes = int(os.environ.get("RECUR_PASSES", "1"))
@@ -2278,7 +2278,7 @@ def main() -> None:
     from collections import deque
     lawa_queue: deque[dict[str, Tensor]] = deque(maxlen=args.lawa_k)
     ema_state = {name: t.detach().float().clone() for name, t in base_model.state_dict().items()}
-    ema_decay = 0.997
+    ema_decay = float(os.environ.get("EMA_DECAY", "0.9965"))
     training_time_ms = 0.0
     stop_after_step: int | None = None
     torch.cuda.synchronize()
